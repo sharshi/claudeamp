@@ -335,7 +335,7 @@
       <h2>Hooks in, <em>SVG</em> out.</h2>
       <div class="how">
         <div><code>turn.step · tool.call</code><p>Watches the token stream as it goes by, without changing it: thinking, text and tool chunks feed a word tally, a lyric buffer and a characters-per-second meter.</p></div>
-        <div><code>$.state → Pane → &lt;Svg&gt;</code><p>Redraws are rare: at most one every 5 seconds, and only on a visible change. All motion between redraws is CSS keyframes inside the SVG, so nothing blinks.</p></div>
+        <div><code>$.state → Pane → &lt;Svg&gt;</code><p>Redraws are rare: at most one every 3 seconds, and only on a visible change. All motion between redraws is CSS keyframes inside the SVG, so nothing blinks.</p></div>
         <div><code>turn.complete → haiku</code><p>The finale waits briefly for the liner notes, then plays once: flash, rings, falling bars and the track-complete card.</p></div>
       </div>
     </div>

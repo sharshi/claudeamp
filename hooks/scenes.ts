@@ -7,7 +7,7 @@ export const DEFAULT_FRAME: Frame = { width: 360, height: 480 }
 // Set by deckSvg for the draw in progress; every scene lays out against them.
 let W = DEFAULT_FRAME.width
 let H = DEFAULT_FRAME.height
-const STAGE_TOP = 64
+let STAGE_TOP = 64
 let STAGE_H = H - 120
 
 /** A frame (drawing units) shaped like a box of the given pixel size. */
@@ -70,10 +70,13 @@ function clock(ms: number): string {
 }
 
 /** The whole drawing: chrome plus the current scene (or the finale). */
-export function deckSvg(deck: Deck, now: number, frame: Frame = DEFAULT_FRAME): string {
+/** `lcd: false` leaves out the header and LCD strip (the desktop pane draws a live one above). */
+export function deckSvg(deck: Deck, now: number, frame: Frame = DEFAULT_FRAME, options: { lcd?: boolean } = {}): string {
+  const hasLcd = options.lcd !== false
   W = frame.width
   H = frame.height
-  STAGE_H = H - 120
+  STAGE_TOP = hasLcd ? 64 : 10
+  STAGE_H = H - STAGE_TOP - 56
   const pal = PALETTES[deck.phase]
   const body =
     deck.phase === 'finale' && deck.finale
@@ -136,7 +139,7 @@ export function deckSvg(deck: Deck, now: number, frame: Frame = DEFAULT_FRAME): 
 </style>
 <rect width="${W}" height="${H}" fill="url(#bg)"/>
 <rect class="aura" width="${W}" height="${H}" fill="url(#aura)"/>
-<g font-family="${MONO}">
+${hasLcd ? `<g font-family="${MONO}">
   <text x="14" y="22" font-size="11" letter-spacing="3" fill="${pal.b}" font-weight="700">CLAUDAMP</text>
   <text x="${W - 14}" y="22" font-size="11" text-anchor="end" fill="#64748b">${deck.phase === 'finale' ? '■ STOP' : deck.phase === 'idle' ? '❚❚ PAUSE' : '▶ PLAY'}</text>
   <rect x="12" y="32" width="${W - 24}" height="24" rx="3" fill="#000" stroke="#1e293b"/>
@@ -145,7 +148,7 @@ export function deckSvg(deck: Deck, now: number, frame: Frame = DEFAULT_FRAME): 
   <g clip-path="url(#lcd)">
     <g class="marquee"><text x="18" y="48" font-size="11" fill="#4ade80" opacity=".9">${esc(ticker)}   ${esc(ticker)}   </text></g>
   </g>
-</g>
+</g>` : ''}
 <rect x="10" y="${STAGE_TOP}" width="${W - 20}" height="${STAGE_H}" rx="6" fill="#000" fill-opacity=".35" stroke="#1e1b4b"/>
 <g clip-path="url(#stage)">${body}</g>
 ${footer(deck, pal)}
@@ -350,8 +353,9 @@ const ENTRIES = [
  */
 function lyrics(deck: Deck, pal: Palette): string {
   const r = rng(deck.beat + 3)
-  const words = deck.lyric.slice(-12)
-  const step = 0.46
+  // A batch fits between redraws (about every 3.5 s), so the lyrics keep up with the stream.
+  const words = deck.lyric.slice(-8)
+  const step = 0.38
   const fly = 0.32
   const cx = W / 2
   const cy = STAGE_TOP + STAGE_H * 0.44

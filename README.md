@@ -103,6 +103,7 @@ Claude Code reads a local-folder marketplace straight from the folder, so after 
 | `/claudamp next` | Next scene (moves the pin if one is set) |
 | `/claudamp stats` | How much text the mod has heard from each source (thinking, replies, your prompts, tools) |
 | `/claudamp size` | What the pane measured, and the size it draws at |
+| `/claudamp mode image` / `frame` | How the Desktop app shows the drawing: `frame` (default) always animates but blinks when it updates; `image` may swap without a blink, so it updates every second |
 
 In the terminal, Claudamp falls back to a simple text version: a `▁▂▃▅▇` bar strip, the current lyric word and the top words.
 
@@ -114,13 +115,14 @@ tool.call        ──► tool phase · glitch on error
 turn.start       ──► reset · first scene (or your pick)
 turn.complete    ──► Haiku liner notes (≤ 4 s) ──► one finale redraw
                          │
-clock.every(450ms) ──► $.state (≤ 1 write per 5 s) ──► Pane ──► <Svg> sized to the pane
+clock.every(450ms) ──► $.state (≤ 1 write per 3 s) ──► Pane ──► <Svg> sized to the pane
 ```
 
 | File | What it does |
 | --- | --- |
-| `hooks/register.tsx` | The hooks. They watch the token stream without changing it, save the scene pick in `$.store`, and redraw **rarely**: every state write redraws the pane, and the Desktop app reloads an SVG whole, so frequent writes would blink. All motion between redraws comes from the CSS inside the SVG. |
+| `hooks/register.tsx` | The hooks. They watch the token stream without changing it, save the scene pick in `$.store`, and redraw **sparingly** (at most every 3 s, and only for the turn your prompt started): every state write redraws the pane, and the Desktop app reloads an SVG whole, so frequent writes would blink. All motion between redraws comes from the CSS inside the SVG. |
 | `hooks/scenes.ts` | Pure functions from state to SVG, laid out against a frame shaped like the pane. Randomized negative animation delays make a redraw look continuous instead of starting over. |
+| `hooks/ticker.tsx` | The live LCD strip on Desktop: a `Client` that runs inside the pane, scrolling its marquee and ticking the turn clock on its own, and asking for fresh tok/s, phase and the current tool call about three times a second, so it updates without redrawing the pane. |
 | `hooks/words.ts` | Tokenizing, stopwords, and a word tally that slowly forgets older words. |
 
 Tetris is played in full ahead of time: a simple AI drops each word-piece, avoiding holes and keeping the stack low, then gets careless after about 25 seconds so every game ends in a top-out. The whole game, including falls, line clears, gravity and the final explosion, is written out as one CSS timeline. Its clock runs from the turn's start, so a redraw picks the game up where it was. Games are capped to stay under the Desktop app's 131,072-character SVG limit.

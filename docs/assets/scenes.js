@@ -80,10 +80,12 @@ var Claudamp = (() => {
     const sec = Math.max(0, Math.floor(ms / 1e3));
     return `${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
   }
-  function deckSvg(deck, now, frame = DEFAULT_FRAME) {
+  function deckSvg(deck, now, frame = DEFAULT_FRAME, options = {}) {
+    const hasLcd = options.lcd !== false;
     W = frame.width;
     H = frame.height;
-    STAGE_H = H - 120;
+    STAGE_TOP = hasLcd ? 64 : 10;
+    STAGE_H = H - STAGE_TOP - 56;
     const pal = PALETTES[deck.phase];
     const body = deck.phase === "finale" && deck.finale ? finale(deck.finale) : deck.scene === 1 ? cloud(deck.words.length > 2 ? deck : { ...deck, words: PLACEHOLDER_WORDS }, pal) : deck.scene === 2 ? lyrics(deck.lyric.length > 0 ? deck : { ...deck, lyric: ["waiting", "for", "a", "prompt"] }, pal) : deck.scene === 3 ? tetris(deck, now) : spectrum(deck, pal);
     const elapsed = deck.phase === "idle" ? "--:--" : deck.phase === "finale" && deck.finale ? clock(deck.finale.durationMs) : "\u25CF LIVE";
@@ -122,7 +124,7 @@ var Claudamp = (() => {
 </style>
 <rect width="${W}" height="${H}" fill="url(#bg)"/>
 <rect class="aura" width="${W}" height="${H}" fill="url(#aura)"/>
-<g font-family="${MONO}">
+${hasLcd ? `<g font-family="${MONO}">
   <text x="14" y="22" font-size="11" letter-spacing="3" fill="${pal.b}" font-weight="700">CLAUDAMP</text>
   <text x="${W - 14}" y="22" font-size="11" text-anchor="end" fill="#64748b">${deck.phase === "finale" ? "\u25A0 STOP" : deck.phase === "idle" ? "\u275A\u275A PAUSE" : "\u25B6 PLAY"}</text>
   <rect x="12" y="32" width="${W - 24}" height="24" rx="3" fill="#000" stroke="#1e293b"/>
@@ -131,7 +133,7 @@ var Claudamp = (() => {
   <g clip-path="url(#lcd)">
     <g class="marquee"><text x="18" y="48" font-size="11" fill="#4ade80" opacity=".9">${esc(ticker)}   ${esc(ticker)}   </text></g>
   </g>
-</g>
+</g>` : ""}
 <rect x="10" y="${STAGE_TOP}" width="${W - 20}" height="${STAGE_H}" rx="6" fill="#000" fill-opacity=".35" stroke="#1e1b4b"/>
 <g clip-path="url(#stage)">${body}</g>
 ${footer(deck, pal)}
@@ -280,8 +282,8 @@ ${deck.phase === "finale" && deck.finale?.isFresh ? `<rect x="0" y="0" width="${
   ];
   function lyrics(deck, pal) {
     const r = rng(deck.beat + 3);
-    const words = deck.lyric.slice(-12);
-    const step = 0.46;
+    const words = deck.lyric.slice(-8);
+    const step = 0.38;
     const fly = 0.32;
     const cx = W / 2;
     const cy = STAGE_TOP + STAGE_H * 0.44;

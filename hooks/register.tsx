@@ -3,6 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Deck, Finale, Phase } from '../types'
 import { deckSvg, frameFor, SCENES } from './scenes'
+import type { TickerProps } from './ticker'
 import { contentWords, lyricWords, stringsIn, Tally } from './words'
 import type { WordSource } from './words'
 
@@ -13,10 +14,23 @@ const SCENE_MS = 12_000
  * (a visible blink), so redraws are rare: the CSS inside the SVG carries the
  * motion between them.
  */
-const MIN_GAP = 5_000
+/**
+ * How the drawing is shown: `frame` (a sandboxed frame; CSS animation is
+ * certain, but each update reloads it) or `image` (may swap without a blink).
+ * Chosen with `/claudamp mode`, kept in the store.
+ */
+let mode: 'frame' | 'image' = 'frame'
+const STORE_MODE = 'mode'
+let MIN_GAP = 3_000
 /** Wordclaude draws every word it has room for; this only bounds the redraw's size. */
 const WORD_LIMIT = 160
-const LYRIC_GAP = 6_000
+let LYRIC_GAP = 3_500
+
+function setMode(next: 'frame' | 'image'): void {
+  mode = next
+  MIN_GAP = next === 'image' ? 1_000 : 3_000
+  LYRIC_GAP = next === 'image' ? 3_000 : 3_500
+}
 
 /** The picker's choices: null rotates the scenes, a number pins one. */
 const CHOICES = [
@@ -66,6 +80,9 @@ let sceneSince = 0
 let turnId = ''
 let turn = { tools: 0, outputTokens: 0 }
 
+/** Between turns the engine still makes requests of its own (prompt suggestions and the like); they are not the show. */
+const inTurn = () => live.phase !== 'idle' && live.phase !== 'finale'
+
 function setPhase(phase: Phase, tool: string | null = live.tool): void {
   if (live.phase === phase && live.tool === tool) return
   live = { phase, tool }
@@ -81,7 +98,56 @@ function hear(text: string, source: WordSource, weight = 1): void {
   tally.add(contentWords(text), source, weight)
 }
 
+/** The last few seconds of stream, for the live tok/s on the LCD. */
+let recent: { t: number; n: number }[] = []
+let vuHistory: number[] = []
+/** The latest tool call in a few words: `Edit scenes.ts`, `Bash npm test`. */
+let lastAction = ''
+
+function liveTps(now: number): number {
+  recent = recent.filter(r => now - r.t < 2_000)
+  // About four characters to a token.
+  return recent.reduce((n, r) => n + r.n, 0) / 2 / 4
+}
+
+async function tickerProps($: EngineInterface): Promise<TickerProps> {
+  const d = await read($, deck)
+  const now = Date.now()
+  const tps = inTurn() ? liveTps(now) : 0
+  vuHistory = [...vuHistory, Math.min(1, tps / 60)].slice(-16)
+  const sceneName = SCENES[d.scene] ?? ''
+  const text =
+    d.phase === 'idle'
+      ? 'CLAUDAMP ★ WAITING FOR A PROMPT ★ PRESS PLAY'
+      : d.phase === 'finale'
+        ? `FIN ★ ${(d.finale?.title ?? '').toUpperCase()} ★ THANKS FOR LISTENING`
+        : live.phase === 'tool'
+          ? `▶ ${lastAction || live.tool || 'TOOL'} ★ ${sceneName}`
+          : `CLAUDE · ${live.phase.toUpperCase()} ★ ${sceneName}${lastAction ? ` ★ last: ${lastAction}` : ''}`
+  return {
+    phase: inTurn() ? live.phase : d.phase,
+    text,
+    tps,
+    vu: Array.from({ length: 16 }, (_, i) => vuHistory[i - 16 + vuHistory.length] ?? 0),
+    startedAt: inTurn() ? d.turnStartedAt : 0,
+    durationMs: d.phase === 'finale' ? (d.finale?.durationMs ?? null) : null,
+  }
+}
+
+/** A tool call in a few words, for the ticker. */
+function describeCall(e: Record<string, unknown>): string {
+  for (const key of ['command', 'file_path', 'pattern', 'url', 'path', 'description', 'query']) {
+    const v = e[key]
+    if (typeof v === 'string' && v.trim()) {
+      const short = key === 'file_path' || key === 'path' ? (v.split('/').pop() ?? v) : v
+      return `${String(e.tool)} ${short.replace(/\s+/g, ' ').slice(0, 48)}`
+    }
+  }
+  return String(e.tool)
+}
+
 function feed(text: string, isThinking: boolean): void {
+  recent.push({ t: Date.now(), n: text.length })
   chars += text.length
   arrivals.push({ t: Date.now(), n: text.length })
   hear(text, isThinking ? 'think' : 'reply')
@@ -136,7 +202,7 @@ async function flush($: EngineInterface, start?: { turnStartedAt: number }): Pro
   lastFlush = now
   phaseChanged = false
   glitchPending = false
-  const lyric = lyricFresh ? lyricBuf.slice(-12) : undefined
+  const lyric = lyricFresh ? lyricBuf.slice(-8) : undefined
   lyricFresh = false
 
   await update($, deck, (d): Deck => ({
@@ -167,7 +233,8 @@ function paneSize(columns: number, rows: number | undefined): { width: number; h
   // The picker's buttons wrap; leave them their rows.
   const labels = CHOICES.reduce((n, c) => n + c.label.length * 9 + 56, 0)
   const pickerRows = Math.max(1, Math.ceil(labels / width))
-  const room = rows === undefined ? width * 1.4 : rows * CELL.height - pickerRows * 44 - 16
+  // Less the LCD strip's row.
+  const room = rows === undefined ? width * 1.4 : rows * CELL.height - pickerRows * 44 - 16 - 30
   return { width, height: Math.round(Math.min(width * 3, Math.max(240, room))) }
 }
 
@@ -227,11 +294,13 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'claudamp',
-      description: 'Open the Claudamp visualizer (args: next = next scene, stats = words heard, size = pane size)',
+      description: 'Open the Claudamp visualizer (args: next, stats, size, mode image|frame)',
     })
     const stored = await $.store.get(STORE_PICK)
     pick = typeof stored === 'number' && stored >= 0 && stored < SCENES.length ? stored : null
     scene = pick ?? 0
+    const storedMode = await $.store.get(STORE_MODE)
+    setMode(storedMode === 'image' ? 'image' : 'frame')
     const kept = await $.store.get(STORE_WORDS)
     if (Array.isArray(kept)) tally.seed(kept)
     await update($, deck, (d): Deck => ({ ...d, pick, scene, words: tally.top(WORD_LIMIT) }))
@@ -242,6 +311,16 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'claudamp' }, async ($, e) => {
+    const [verb, arg] = e.args.trim().split(/\s+/)
+    if (verb === 'mode') {
+      if (arg === 'image' || arg === 'frame') {
+        setMode(arg)
+        await $.store.set(STORE_MODE, arg)
+        await update($, deck, (d): Deck => ({ ...d, beat: d.beat + 1 }))
+        return { text: `Claudamp draws in ${arg} mode now (redraws up to every ${MIN_GAP / 1000}s).` }
+      }
+      return { text: `Claudamp is in ${mode} mode. Use /claudamp mode image (may swap without a blink) or /claudamp mode frame.` }
+    }
     if (e.args.trim() === 'stats') {
       const words = tally.top(WORD_LIMIT)
       const count = (s: WordSource) => words.filter(w => w[2] === s).length
@@ -274,11 +353,15 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
-    tally.decay(0.5)
+    // Last turn's words fade fast, so this prompt's words take over the cloud quickly.
+    tally.decay(0.3)
     hear(e.text, 'prompt', 1.5)
-    lyricBuf = []
+    // The turn opens on your own words.
+    lyricBuf = lyricWords(e.text).slice(-24)
+    lyricFresh = lyricBuf.length > 0
     turn = { tools: 0, outputTokens: 0 }
     turnId = e.turnId
+    lastAction = ''
     live = { phase: 'thinking', tool: null }
     scene = pick ?? 0
     sceneSince = Date.now()
@@ -288,6 +371,10 @@ export const register: Register = on => {
   })
 
   on('turn.step', async function* ($, e, next) {
+    // Only the turn your prompt started (and subagents working on it) drives the pane;
+    // side requests, such as a prompt suggestion written from the last answer, pass by unwatched.
+    const isOurs = inTurn() && (e.turnId === turnId || e.agentId !== undefined)
+    if (!isOurs) return yield* next(e)
     const stream = next(e)
     for await (const chunk of stream) {
       try {
@@ -312,7 +399,9 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
+    if (!inTurn()) return next(e)
     turn.tools += 1
+    lastAction = describeCall(e as unknown as Record<string, unknown>)
     setPhase('tool', e.tool)
     void flush($)
     hear(stringsIn(e, 3000), 'tool')
@@ -329,7 +418,7 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('turn.complete', async ($, e, next) => {
-    if (e.agentId !== undefined) return next(e)
+    if (e.agentId !== undefined || e.turnId !== turnId || !inTurn()) return next(e)
 
     const finale: Finale = {
       title: e.reason === 'answer' ? 'Done' : e.reason === 'aborted' ? 'Interrupted' : 'No answer',
@@ -366,6 +455,9 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // The live LCD asks for fresh numbers a few times a second; the answer is its next props.
+  on('ui.message', async ($, e, next) => (e.element === 'lcd' ? { props: await tickerProps($) } : next(e)))
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const d = await read($, deck)
     const { Box, Button } = $.ui.resolve(e)
@@ -384,10 +476,30 @@ export const register: Register = on => {
       </Box>
     )
 
-    if (e.surface !== 'terminal' && e.surface !== 'mobile') {
-      const { Svg } = $.ui.resolve(e)
+    if (e.surface === 'desktop') {
+      const { Svg, Client } = $.ui.resolve(e)
       const size = paneSize(e.props.bodyColumns, e.props.scroll?.bodyRows)
       lastSize = { columns: e.props.bodyColumns, rows: e.props.scroll?.bodyRows ?? null, ...size }
+      const frame = frameFor(size.width, size.height)
+      return (
+        <Box flexDirection="column">
+          {picker}
+          <Client key="lcd" module="./ticker.tsx" props={await tickerProps($)} height={1} />
+          <Svg
+            source={deckSvg(d, Date.now(), frame, { lcd: false })}
+            alt={`Claudamp: ${d.phase}`}
+            width={size.width}
+            height={size.height}
+            isInteractive={mode === 'frame' ? true : undefined}
+          />
+        </Box>
+      )
+    }
+
+    if (e.surface !== 'terminal' && e.surface !== 'mobile') {
+      // The editor's webview: no Client there, so the SVG keeps its own LCD.
+      const { Svg } = $.ui.resolve(e)
+      const size = paneSize(e.props.bodyColumns, e.props.scroll?.bodyRows)
       const frame = frameFor(size.width, size.height)
       return (
         <Box flexDirection="column">
