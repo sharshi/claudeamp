@@ -1,0 +1,13 @@
+{
+  "name": "claudamp",
+  "description": "Claudamp: a Winamp-style visualizer sidebar for Claude Code",
+  "owner": {
+    "name": "s.borisute"
+  },
+  "plugins": [
+    {
+      "name": "claudamp",
+      "source": "./"
+    }
+  ]
+}

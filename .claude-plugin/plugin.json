@@ -1,0 +1,7 @@
+{
+  "name": "claudamp",
+  "version": "0.1.0",
+  "author": { "name": "s.borisute" },
+  "description": "A Winamp-style visualizer sidebar that dances to Claude's thinking, output and tool calls, then flashes and sums up when the turn ends",
+  "types": "./types/index.d.ts"
+}
